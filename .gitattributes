@@ -1,0 +1,6 @@
+# Force LF everywhere. Solidity metadata embeds a hash of each source file, so a CRLF
+# checkout on Windows would produce different bytecode -> a different CREATE2 address.
+* text=auto eol=lf
+*.sol text eol=lf linguist-language=Solidity
+*.sh text eol=lf
+*.png binary

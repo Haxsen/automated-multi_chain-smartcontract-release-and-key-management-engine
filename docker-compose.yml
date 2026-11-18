@@ -1,0 +1,57 @@
+# One-command local demo: three independent EVM chains + the release engine.
+#
+#   docker compose up --build --exit-code-from release
+#
+# Deploys SafeVault to all three chains with the same CREATE2 address, verifies the
+# on-chain bytecode and owner, and writes deployments/local/1.0.0/{manifest.json,summary.md}.
+# On Linux hosts run as your own uid so the bind-mounted outputs stay writable:
+#   RUNNER_UID=$(id -u) RUNNER_GID=$(id -g) docker compose up --build --exit-code-from release
+name: release-engine-demo
+
+x-anvil: &anvil
+  image: ghcr.io/foundry-rs/foundry:v1.9.0@sha256:3a392c18f9b16e665e932de159fb6fa9ed972c4b4352f2f76a1a8c7ca9b57d39
+  entrypoint: ["anvil"]
+  healthcheck:
+    test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+    interval: 2s
+    timeout: 3s
+    retries: 15
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+
+services:
+  anvil-l1:
+    <<: *anvil
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337", "--silent"]
+    ports: ["127.0.0.1:8545:8545"]
+
+  anvil-arb:
+    <<: *anvil
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31338", "--silent"]
+    ports: ["127.0.0.1:8546:8545"]
+
+  anvil-op:
+    <<: *anvil
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31339", "--silent"]
+    ports: ["127.0.0.1:8547:8545"]
+
+  release:
+    build:
+      context: .
+      dockerfile: docker/runner.Dockerfile
+    image: release-engine-runner:local
+    user: "${RUNNER_UID:-10001}:${RUNNER_GID:-10001}"
+    depends_on:
+      anvil-l1: { condition: service_healthy }
+      anvil-arb: { condition: service_healthy }
+      anvil-op: { condition: service_healthy }
+    environment:
+      LOCAL_L1_RPC: http://anvil-l1:8545
+      LOCAL_ARB_RPC: http://anvil-arb:8545
+      LOCAL_OP_RPC: http://anvil-op:8545
+    volumes:
+      - .:/workspace
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    command: ["release", "--profile", "local"]

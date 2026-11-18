@@ -1,0 +1,240 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call: # reused as the mandatory gate in release.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Every third-party tool image is pinned by digest (supply-chain hardening).
+  GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f # v8.30.1
+  CONFTEST_IMAGE: openpolicyagent/conftest@sha256:0e77cdf7c1fcde035f3c579e4aaa6664ee2a8be5777eaa9af9f520cdd02280c0 # v0.71.1
+  CHECKOV_IMAGE: bridgecrew/checkov@sha256:122602cf32cc72286155d39f1f234b7b594818f7b8d7fdf490701620e521368b # 3.4.5
+  ACTIONLINT_IMAGE: rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
+  ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d # 1.32.0
+  FOUNDRY_VERSION: v1.9.0
+
+jobs:
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: gitleaks - full history, incl. EVM private key / mnemonic / RPC-key rules
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" git --config .gitleaks.toml --redact --no-banner .
+
+      - name: TruffleHog - live-verified credentials
+        # Tag pushes have no meaningful commit range; gitleaks above still scans full history.
+        if: github.ref_type != 'tag'
+        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9
+        with:
+          extra_args: --results=verified,unknown
+
+  contracts:
+    name: Contracts (fmt, lint, build, fuzz + invariant tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - run: forge fmt --check
+      - run: forge lint -D warnings
+      - run: forge build --sizes
+      - name: Unit, fuzz (10k runs) and invariant tests
+        run: forge test -vvv
+        env:
+          FOUNDRY_PROFILE: ci
+
+  slither:
+    name: Slither static analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # SARIF -> GitHub code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Slither (fail on medium+)
+        id: slither
+        uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
+        with:
+          target: contracts
+          slither-config: contracts/slither.config.json
+          fail-on: medium
+          sarif: results.sarif
+
+      - name: Upload SARIF
+        if: always() && steps.slither.outputs.sarif != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
+          category: slither
+
+  engine:
+    name: Release engine (ruff, pytest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-pinned dev dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - run: ruff check release_engine tests
+      - run: ruff format --check release_engine tests
+      - run: python -m pytest
+
+  policy:
+    name: Policy-as-code (OPA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Policy unit tests
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$CONFTEST_IMAGE" verify --policy policy/terraform --policy policy/release
+
+      - name: Key-management Terraform must satisfy policy
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$CONFTEST_IMAGE" test --parser hcl2 --policy policy/terraform --namespace terraform infra/terraform/
+
+  iac:
+    name: Terraform (fmt, validate, checkov)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - run: terraform fmt -check -recursive
+      - name: Init with the committed, hash-locked provider set
+        run: terraform init -backend=false -input=false -lockfile=readonly
+      - run: terraform validate
+      - name: Checkov
+        run: docker run --rm -v "$PWD:/tf" "$CHECKOV_IMAGE" -d /tf --framework terraform --compact --quiet
+
+  workflow-security:
+    name: Workflow security (actionlint, zizmor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - run: docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE" -color
+      - name: zizmor (template injection, excessive permissions, unpinned actions, ...)
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$ZIZMOR_IMAGE" --offline --min-severity low .github/workflows
+
+  e2e:
+    name: End-to-end release on 3 chains
+    needs: [contracts, engine, policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Run the runner container as the workspace owner
+        run: |
+          echo "RUNNER_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "RUNNER_GID=$(id -g)" >> "$GITHUB_ENV"
+
+      - name: Build hermetic runner image
+        run: docker compose build release
+
+      - name: Start three independent EVM chains
+        run: docker compose up --detach --wait anvil-l1 anvil-arb anvil-op
+
+      - name: Plan
+        run: docker compose run --rm --no-deps release plan --profile local --out deployments/local/plan.json
+
+      - name: Policy gate on the plan
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$CONFTEST_IMAGE" test --policy policy/release --namespace release deployments/local/plan.json
+
+      - name: Release to all chains
+        run: docker compose run --rm --no-deps release release --profile local
+
+      - name: Assert one CREATE2 address everywhere, all checks green
+        run: jq -e '.success and (.deterministic_address != null) and ([.deployments[] | .bytecode_verified and .owner_verified] | all)' deployments/local/1.0.0/manifest.json
+
+      - name: Re-run must be a no-op (idempotency)
+        run: |
+          docker compose run --rm --no-deps release release --profile local
+          jq -e '[.deployments[].status] | all(. == "already_deployed")' deployments/local/1.0.0/manifest.json
+
+      - name: Drift audit
+        run: docker compose run --rm --no-deps release audit --profile local
+
+      - name: Negative test - a mislabelled RPC must be refused
+        run: |
+          if docker compose run --rm --no-deps -e LOCAL_ARB_RPC=http://anvil-l1:8545 release \
+               release --profile local --chain local-arb; then
+            echo "::error::engine signed against an RPC reporting the wrong chain id"; exit 1
+          fi
+
+      - name: Job summary
+        if: always()
+        run: cat deployments/local/1.0.0/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e-deployments
+          path: deployments/local/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes

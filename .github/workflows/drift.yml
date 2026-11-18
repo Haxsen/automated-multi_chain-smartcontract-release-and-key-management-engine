@@ -1,0 +1,77 @@
+name: drift-audit
+
+# Daily check that what is live on-chain still matches the last recorded release:
+# runtime code hash, owner (catches a hijacked multisig / unexpected ownership transfer)
+# and pause state. Opens an incident issue on drift.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  audit:
+    name: Audit ${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [testnet] # add mainnet after its first release
+    # A separate, reviewer-free environment holding only *read-only* RPC keys. It cannot
+    # assume the release role (whose OIDC trust is pinned to the `<profile>` environment).
+    environment: ${{ matrix.profile }}-audit
+    permissions:
+      contents: read
+      issues: write
+    env:
+      PROFILE: ${{ matrix.profile }}
+      PYTHONPATH: engine
+      RELEASE_OWNER: ${{ vars.RELEASE_OWNER }}
+      EXPECTED_DEPLOYER: ${{ vars.EXPECTED_DEPLOYER }}
+      AWS_KMS_KEY_ID: ${{ vars.AWS_KMS_KEY_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Skip if nothing has been released yet
+        id: check
+        run: |
+          if [ -f "deployments/${PROFILE}/latest.json" ]; then echo "released=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::no ${PROFILE} release recorded yet"; fi
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: steps.check.outputs.released == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Audit live state
+        if: steps.check.outputs.released == 'true'
+        env:
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL }}
+          OPTIMISM_SEPOLIA_RPC_URL: ${{ secrets.OPTIMISM_SEPOLIA_RPC_URL }}
+          ETHEREUM_RPC_URL: ${{ secrets.ETHEREUM_RPC_URL }}
+          ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
+          OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
+        run: python -m release_engine audit --profile "$PROFILE" --secrets env --out audit.json
+
+      - name: Open incident issue
+        if: failure() && steps.check.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The daily drift audit found on-chain state that no longer matches the last ${PROFILE} release."
+            echo
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo '```json'
+            cat audit.json 2>/dev/null || echo '{"error": "audit did not complete"}'
+            echo '```'
+            echo
+            echo "Follow docs/runbook.md -> 'Ownership drift'."
+          } > issue.md
+          gh issue create --title "On-chain drift detected (${PROFILE})" --body-file issue.md

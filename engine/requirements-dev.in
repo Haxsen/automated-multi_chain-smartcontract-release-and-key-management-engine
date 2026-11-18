@@ -1,0 +1,4 @@
+# Dev/test tooling. Compile with:
+#   pip-compile --generate-hashes --allow-unsafe -o requirements-dev.lock requirements-dev.in
+pytest>=8,<9
+ruff>=0.8

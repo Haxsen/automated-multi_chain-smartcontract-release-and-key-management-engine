@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "release-engine"
+version = "0.1.0"
+description = "Secure multi-chain smart contract release & key management engine (Foundry + AWS KMS)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# The core engine is stdlib-only on purpose: a deployment tool that holds signing
+# authority should have the smallest possible dependency (supply-chain) surface.
+dependencies = []
+
+[project.optional-dependencies]
+aws = ["boto3>=1.35,<2"]
+dev = ["pytest>=8,<9", "ruff>=0.8"]
+
+[project.scripts]
+release-engine = "release_engine.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["release_engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = [
+  "S603", # subprocess without shell=True is exactly what we want; args are never shell-parsed
+  "S607", # forge/cast/git are resolved from PATH by design (pinned toolchain in CI / Docker)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]

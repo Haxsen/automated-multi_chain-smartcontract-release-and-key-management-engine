@@ -1,0 +1,32 @@
+# gitleaks configuration: all default rules + Web3-specific detectors.
+title = "release-engine gitleaks config"
+
+[extend]
+useDefault = true
+
+# A raw secp256k1 private key looks like any other 32-byte hex value (tx hash, salt...),
+# so match it only next to a key-ish identifier.
+[[rules]]
+id = "evm-private-key"
+description = "EVM private key assigned to a key-like variable"
+regex = '''(?i)(?:private[_-]?key|priv[_-]?key|deployer[_-]?key|signer[_-]?key|pk)\s*[:=]\s*["']?(0x[0-9a-f]{64})\b'''
+secretGroup = 1
+keywords = ["private_key", "privatekey", "private-key", "priv_key", "deployer_key", "signer_key", "pk"]
+
+[[rules]]
+id = "bip39-mnemonic"
+description = "BIP-39 mnemonic seed phrase assigned to a variable"
+regex = '''(?i)(?:mnemonic|seed[_-]?phrase)\s*[:=]\s*["']((?:[a-z]{3,8}\s+){11,23}[a-z]{3,8})["']'''
+secretGroup = 1
+keywords = ["mnemonic", "seed_phrase", "seedphrase", "seed-phrase"]
+
+[[rules]]
+id = "rpc-provider-url-with-key"
+description = "Ethereum RPC provider URL with an embedded API key"
+regex = '''https://[a-z0-9.-]*(?:alchemy\.com|infura\.io|quiknode\.pro|ankr\.com|blastapi\.io|chainstack\.com)/(?:v[0-9]/)?([A-Za-z0-9_-]{20,})'''
+secretGroup = 1
+keywords = ["alchemy.com", "infura.io", "quiknode.pro", "ankr.com", "blastapi.io", "chainstack.com"]
+
+[allowlist]
+description = "Vendored dependencies"
+paths = ['''contracts/lib/''']

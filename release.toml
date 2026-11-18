@@ -1,0 +1,150 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Multi-chain release configuration
+#
+#  * ${VAR} / ${VAR:-default}  -> interpolated from the environment (CI: GitHub
+#    Environment *variables* - identifiers like key ARNs and addresses, not secrets)
+#  * "secret:NAME"             -> resolved at runtime from the profile's secret
+#    source (AWS Secrets Manager in CI). RPC URLs embed provider API keys, so they
+#    are secrets. Nothing in this file is sensitive; never paste a key here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[project]
+foundry_root = "contracts"
+deployments_dir = "deployments"
+
+[release]
+name = "safe-vault"
+version = "1.0.0"
+contract = "src/SafeVault.sol:SafeVault"
+script = "script/Deploy.s.sol:Deploy"
+# CREATE2 salt. Same salt + same init code (bytecode + owner) => same address on every chain.
+salt = "safe-vault/v1.0.0"
+
+# ───────────────────────────── mainnets ──────────────────────────────────────
+[chains.ethereum]
+chain_id = 1
+rpc = "secret:ETHEREUM_RPC_URL"
+explorer = "https://etherscan.io"
+max_gas_price_gwei = 30
+min_balance_eth = 0.03
+confirmations = 3
+
+[chains.arbitrum]
+chain_id = 42161
+rpc = "secret:ARBITRUM_RPC_URL"
+explorer = "https://arbiscan.io"
+max_gas_price_gwei = 0.5
+min_balance_eth = 0.002
+confirmations = 10
+
+[chains.optimism]
+chain_id = 10
+rpc = "secret:OPTIMISM_RPC_URL"
+explorer = "https://optimistic.etherscan.io"
+max_gas_price_gwei = 0.5
+min_balance_eth = 0.002
+confirmations = 5
+
+# ───────────────────────────── testnets ──────────────────────────────────────
+[chains.sepolia]
+chain_id = 11155111
+rpc = "secret:SEPOLIA_RPC_URL"
+explorer = "https://sepolia.etherscan.io"
+max_gas_price_gwei = 100
+min_balance_eth = 0.02
+confirmations = 2
+
+[chains.arbitrum-sepolia]
+chain_id = 421614
+rpc = "secret:ARBITRUM_SEPOLIA_RPC_URL"
+explorer = "https://sepolia.arbiscan.io"
+max_gas_price_gwei = 2
+min_balance_eth = 0.005
+confirmations = 2
+
+[chains.optimism-sepolia]
+chain_id = 11155420
+rpc = "secret:OPTIMISM_SEPOLIA_RPC_URL"
+explorer = "https://sepolia-optimism.etherscan.io"
+max_gas_price_gwei = 2
+min_balance_eth = 0.005
+confirmations = 2
+
+# ───────────────────── local anvil chains (docker compose) ───────────────────
+[chains.local-l1]
+chain_id = 31337
+rpc = "${LOCAL_L1_RPC:-http://127.0.0.1:8545}"
+max_gas_price_gwei = 100
+min_balance_eth = 1
+confirmations = 1
+
+[chains.local-arb]
+chain_id = 31338
+rpc = "${LOCAL_ARB_RPC:-http://127.0.0.1:8546}"
+max_gas_price_gwei = 100
+min_balance_eth = 1
+confirmations = 1
+
+[chains.local-op]
+chain_id = 31339
+rpc = "${LOCAL_OP_RPC:-http://127.0.0.1:8547}"
+max_gas_price_gwei = 100
+min_balance_eth = 1
+confirmations = 1
+
+# ───────────────────────────── profiles ──────────────────────────────────────
+[profiles.local]
+description = "3 local anvil chains, unlocked dev account, zero secrets"
+chains = ["local-l1", "local-arb", "local-op"]
+owner = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"             # anvil #1 stands in for a Safe
+expected_deployer = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" # anvil #0
+secrets = "env"
+verify_explorer = false
+
+[profiles.local.signer]
+type = "anvil"
+address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+[profiles.testnet]
+description = "Sepolia + Arbitrum Sepolia + OP Sepolia, AWS KMS signer"
+chains = ["sepolia", "arbitrum-sepolia", "optimism-sepolia"]
+owner = "${RELEASE_OWNER}"
+expected_deployer = "${EXPECTED_DEPLOYER}"
+secrets = "aws:${RELEASE_SECRET_ID:-web3-release/testnet/config}"
+etherscan_api_key = "secret:ETHERSCAN_API_KEY"
+verify_explorer = true
+require_clean_git = true
+
+[profiles.testnet.signer]
+type = "kms"
+key_id = "${AWS_KMS_KEY_ID}"
+
+[profiles.testnet-break-glass]
+description = "Testnets via a Secrets Manager hot key (fallback when KMS is unavailable)"
+chains = ["sepolia", "arbitrum-sepolia", "optimism-sepolia"]
+owner = "${RELEASE_OWNER}"
+expected_deployer = "${EXPECTED_DEPLOYER}"
+secrets = "aws:${RELEASE_SECRET_ID:-web3-release/testnet/config}"
+etherscan_api_key = "secret:ETHERSCAN_API_KEY"
+verify_explorer = true
+require_clean_git = true
+
+[profiles.testnet-break-glass.signer]
+type = "secretsmanager"
+field = "DEPLOYER_PRIVATE_KEY"
+
+[profiles.mainnet]
+description = "Ethereum + Arbitrum One + OP Mainnet, AWS KMS signer, tagged releases only"
+production = true
+chains = ["ethereum", "arbitrum", "optimism"]
+owner = "${RELEASE_OWNER}"                 # a Safe multisig, never the deployer key
+expected_deployer = "${EXPECTED_DEPLOYER}" # address derived from the KMS public key
+secrets = "aws:${RELEASE_SECRET_ID:-web3-release/mainnet/config}"
+etherscan_api_key = "secret:ETHERSCAN_API_KEY"
+verify_explorer = true
+require_clean_git = true
+require_tag = true
+
+[profiles.mainnet.signer]
+type = "kms"
+key_id = "${AWS_KMS_KEY_ID}"

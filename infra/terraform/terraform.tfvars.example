@@ -1,0 +1,17 @@
+# cp terraform.tfvars.example terraform.tfvars   (terraform.tfvars is git-ignored)
+aws_region        = "us-east-1"
+github_repository = "your-github-user/automated-multi_chain-smartcontract-release-and-key-management-engine"
+
+environments = {
+  testnet = {}
+  mainnet = { deletion_window_days = 30 }
+}
+
+# Principals that may administer - but never use - the signing keys.
+# key_admin_arns = ["arn:aws:iam::123456789012:role/SecurityAdmin"]
+
+# alert_email = "security@example.com"
+
+# Use COMPLIANCE for production: records can't be deleted by anyone, including root.
+ledger_lock_mode      = "GOVERNANCE"
+ledger_retention_days = 365

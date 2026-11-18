@@ -1,0 +1,38 @@
+# Foundry build output
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/release-out/
+
+# Local demo records (testnet/mainnet records under deployments/ ARE committed as history)
+deployments/local/
+deployments/**/manifest.dry-run.json*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+
+# Terraform: state can contain sensitive values - it belongs in an encrypted remote backend
+infra/**/.terraform/
+infra/**/*.tfstate
+infra/**/*.tfstate.*
+infra/**/*.tfplan
+infra/**/terraform.tfvars
+infra/**/crash.log
+
+# Secrets must never be written to disk in this repo
+.env
+.env.*
+*.pem
+*.key
+keystore/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
