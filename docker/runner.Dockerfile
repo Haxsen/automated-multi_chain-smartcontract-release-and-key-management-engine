@@ -3,7 +3,7 @@
 # Hermetic release runner: pinned Foundry + pinned solc + hash-locked Python deps,
 # running as an unprivileged user. Base images are pinned by digest (supply chain).
 # ─────────────────────────────────────────────────────────────────────────────
-FROM ghcr.io/foundry-rs/foundry:v1.9.0@sha256:3a392c18f9b16e665e932de159fb6fa9ed972c4b4352f2f76a1a8c7ca9b57d39 AS foundry
+FROM ghcr.io/foundry-rs/foundry:v1.10.0@sha256:03ca6dc0accb53b6f67278b5a1c70bef984d5a2a2bcb197298c3b6f3b929c798 AS foundry
 
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
