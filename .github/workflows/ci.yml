@@ -39,7 +39,7 @@ jobs:
       - name: TruffleHog - live-verified credentials
         # Tag pushes have no meaningful commit range; gitleaks above still scans full history.
         if: github.ref_type != 'tag'
-        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9
+        uses: trufflesecurity/trufflehog@4ef51f69ca6347aaa76a5e64a87eac9c0c909f71 # v3.100.1
         with:
           extra_args: --results=verified,unknown
 
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && steps.slither.outputs.sarif != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: ${{ steps.slither.outputs.sarif }}
           category: slither
